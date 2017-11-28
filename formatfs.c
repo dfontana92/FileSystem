@@ -39,42 +39,74 @@ int main()
 	int firstDirBlock = 1 + numFatBlocks;
 	int firstDataBlock = 1 + numFatBlocks + numDirBlocks;
 
+	// Free Space Tracker (not super efficient)
+	int lastUsedBlock = 0;
+
 	// Write FileSys Info to Block 0
-	//	numFatBlocks
-	//  numDirBlocks
-	//  numDataBlocks
-	//	firstFatBlock
-	//	firstDirBlock
-	//  firstDataBlock
+	//	numFatBlocks	(bytes 0-3)
+	//  numDirBlocks	(bytes 4-7)
+	//  numDataBlocks	(bytes 8-11)
+	//	firstFatBlock	(bytes 12-15)
+	//	firstDirBlock	(bytes 16-19)
+	//  firstDataBlock	(bytes 20-23)
+	//  lastUsedBlock	(bytes 24-27) - starts as 0, no need to write
 
-	char* data = malloc(blockSize*sizeof(char));
+		char* data = calloc(blockSize, sizeof(char));
 
-	int offset = 0;
+		int offset = 0;
 
-	memcpy(data + offset, &numFatBlocks, sizeof(numFatBlocks));
-	offset += sizeof(numFatBlocks);
+		memcpy(data + offset, &numFatBlocks, sizeof(numFatBlocks));
+		offset += sizeof(numFatBlocks);
 
-	memcpy(data + offset, &numDirBlocks, sizeof(numDirBlocks));
-	offset += sizeof(numDirBlocks);
+		memcpy(data + offset, &numDirBlocks, sizeof(numDirBlocks));
+		offset += sizeof(numDirBlocks);
 
-	memcpy(data + offset, &numDataBlocks, sizeof(numDataBlocks));
-	offset += sizeof(numDataBlocks);
+		memcpy(data + offset, &numDataBlocks, sizeof(numDataBlocks));
+		offset += sizeof(numDataBlocks);
 
-	memcpy(data + offset, &firstFatBlock, sizeof(firstFatBlock));
-	offset += sizeof(firstFatBlock);
+		memcpy(data + offset, &firstFatBlock, sizeof(firstFatBlock));
+		offset += sizeof(firstFatBlock);
 
-	memcpy(data + offset, &firstDirBlock, sizeof(firstDirBlock));
-	offset += sizeof(firstDirBlock);
+		memcpy(data + offset, &firstDirBlock, sizeof(firstDirBlock));
+		offset += sizeof(firstDirBlock);
 
-	memcpy(data + offset, &firstDataBlock, sizeof(firstDataBlock));
-	offset += sizeof(firstDataBlock);
+		memcpy(data + offset, &firstDataBlock, sizeof(firstDataBlock));
+		offset += sizeof(firstDataBlock);
 
-	// Passes
-	int temp = write_sd_block((void*)data, 0);
-	printf("\nWrite to Block 0 returned %i\n", temp);
+		// Passes
+		int temp = write_sd_block((void*)data, 0);
+		printf("\nWrite to Block 0 returned %i\n", temp);
 
-	// Passes
-	char* input = malloc(blockSize*sizeof(char));
-	temp = read_sd_block(input, 0);
-	printf("Read from Block 0 returned %i\n", temp);
+		// Cleanup
+		free(data);
+
+		/* Passes
+		char* input = calloc(blockSize, sizeof(char));
+		temp = read_sd_block(input, 0);
+		printf("Read from Block 0 returned %i\n", temp);
+		*/
+
+	// Write initial FAT table
+	//  Basically just 0x00 to all bytes (so don't write anything..)
+
+	// Write initial FileRecord
+	//  Again basically just 0x00 for all bytes sooo...
+
+	// !!! Testing File Record
+	char fileAttr = 0b10000001;
+	int dataBlock = 0;
+	int fileSize = 300;
+	char name[23] = "Little";
+
+	data = calloc(blockSize, sizeof(char));
+	memcpy(data, &fileAttr, sizeof(char));
+	memcpy(data+1, &dataBlock, sizeof(int));
+	memcpy(data+5, &fileSize, sizeof(int));
+	memcpy(data+9, name, sizeof(name));
+
+	write_sd_block((void*)data, firstDirBlock);
+
+
+
+	printf("File System Initialization Successful");
 }

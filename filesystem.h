@@ -1,6 +1,6 @@
 
 // main private file type
-typedef FileInternals {
+typedef struct FileInternals {
 		// Need to track current position in file
 		// Can also track File size
 		// Read-Only / Read-Write (File Mode enum)
@@ -74,4 +74,8 @@ void fs_print_error(void);
 // filesystem error code set (set by each filesystem function)
 extern FSError fserror;
  
-}
+// Endian-ness sucks
+void iEndianSwap(int* num);
+
+// Bitwise Comparison Function
+int isNthBitSet(unsigned char c, int n);
