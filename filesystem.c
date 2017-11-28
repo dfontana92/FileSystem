@@ -32,6 +32,7 @@ File open_file(char *name, FileMode mode)
 
 	// Return File pointer
 }
+*/
 
 // create and open new file with pathname 'name' and access mode 'mode'.  Current file
 // position is set at byte 0.  Returns NULL on error. Always sets 'fserror' global.
@@ -43,23 +44,16 @@ File create_file(char *name, FileMode mode)
 		//	 so read entire block via SoftwareDisk into a char(byte) buffer,
 		//   
 }
-*/
+
 
 int file_exists(char *name)
 {
 
-	//===== RETRIEVE RECORD BLOCK =====
+	// ========== RETRIEVE RECORD BLOCK ===========
 
-	// Read first Disk Block to find FS Info
-	//  First File Record block is located Bytes 16-19
-	char* data = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
+	// First File Record block is located Bytes 16-19
+	char* data = calloc(512, sizeof(char));
 	int errCheck = read_sd_block(data, 0);
-
-		// Sanity Checks
-		if(errCheck)
-			printf("\nSuccessfully read Block 0 for file_exists check\n");
-		else
-			printf("\nFailed to read Block 0 for file exists check\n");
 
 	// Parsing Block Index and numDirBlocks
 	int firstRecordBlock;
@@ -74,42 +68,68 @@ int file_exists(char *name)
 	// Read Record Block into buffer
 	free(data);
 	data = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
-	errCheck = read_sd_block(data, firstRecordBlock);
+	read_sd_block(data, firstRecordBlock);
 
 	//===== RECORD CHECKING ======
 
 	// Calculate name length
 	//  length/23 number of records required to match
-	int nameLength = strlen(name);
-	int numRecords = (int)ceil(nameLength/23);
+	unsigned int nameLength = strlen(name);
+	unsigned char numRecordsTarget = (char)ceil(nameLength/23.0);
 
-	// Loop Indexing
-	int alignment = 32;
-	int entryIndex = 0;
-	int entryOffset; 		// will be alignment * entryIndex  for loop
+	// Looping through File Records (!!! Need to have case for overflow to next File Record block !!!)
+	// Check if record present 				(0th bit of fileAttr)
+	//  check if parent						(1st bit of fileAttr)
+	//   check if numRecords is correct 	(4-7 bits of fileAttr)
+	//    check name 						(bytes 9-31)
 
-	// !!! MAKE THIS LOOP (until first byte of entry = 0x00)
-	// Check if record present 				(0th bit)
-	//  then check if parent				(1st bit)
-	//  then check if numRecords is correct (5-7 bit)
-	//  then check name -- byte(char) 5-7
-	
-	int maxRecords = numDirBlocks * 512 / 32;
+	unsigned int alignment = 32;
+	unsigned int maxRecords = numDirBlocks * 512 / 32;
 
-	for(int i = 0; i < maxRecords; i++)
+	for(int entryIndex = 0; entryIndex < maxRecords; entryIndex++)
 	{
+		// Byte-offset from beginning of block to beginning of current entry
+		unsigned int entryOffset = alignment * entryIndex;
+
 		// Get fileAttr byte
 		unsigned char fileAttr;
-		memcpy(&fileAttr, data, sizeof(char));
+		memcpy(&fileAttr, data + entryOffset, sizeof(char));
 
 		if(fileAttr == 0) // End of Records
+		{
+			printf("\nLast Record: %i\n", entryIndex-1);
 			break;
+		}
 
 		if(isNthBitSet(fileAttr, 0)) // is Record Present
 		{
+			printf("\nRecord %i Present\n", entryIndex);
 			if(isNthBitSet(fileAttr, 1)) // is Parent Record
 			{
-				// Check numRecords against 
+				printf(".Record %i is Parent\n", entryIndex);
+				unsigned char numRecordsCurrent = fileAttr & 15;
+				if(numRecordsCurrent == numRecordsTarget) // Matches record length
+				{
+					printf("..Found present, parent record of matching length (%i)\n", numRecordsCurrent);
+					
+					// Name Checking
+					char fileName[numRecordsCurrent*23];
+
+					// Loop to read full name from multiple File Records
+					for(int internalIndex = 0; internalIndex < numRecordsCurrent; internalIndex++)
+					{
+						// Offset 
+						// Name is bytes 9-31 of each record (23 Bytes)
+						printf("...Copying entry %i name\n", internalIndex+1);
+						memcpy((fileName + (internalIndex*23)), (data + entryOffset + (internalIndex*32) + 9), 23*sizeof(char));
+					}
+
+					printf("Found Name: %s\n", fileName);
+					printf("Searching for: %s\n", name);
+
+					if(!strcmp(fileName, name))
+						printf("Test Success!\n");
+				}
 			}
 		} 
 	}
@@ -122,7 +142,7 @@ int file_exists(char *name)
 		// !!! NEED TO HANDLE LONG FILE NAMES
 		//  Probably get strlen from name arg
 		//  then use length/23 to determine number of records
-		//  if 3 least-sig bits don't match that number then skip to next parent
+		//  if 4 least-sig bits don't match that number then skip to next parent
 		//  if number of records matches, then read name (below)
 		//   Must scale fileName[] to length
 		//   			memcpy(d, s, length*sizeof(char))
@@ -144,6 +164,7 @@ int file_exists(char *name)
 	return 1;
 }
 
+// May Be Unneeded Now
 void iEndianSwap(int* num)
 {
 	*num = ((*num>>24)&0xff) |	 	// move byte 3 to byte 0

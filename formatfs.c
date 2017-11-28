@@ -51,6 +51,7 @@ int main()
 	//  firstDataBlock	(bytes 20-23)
 	//  lastUsedBlock	(bytes 24-27) - starts as 0, no need to write
 
+
 		char* data = calloc(blockSize, sizeof(char));
 
 		int offset = 0;
@@ -73,12 +74,19 @@ int main()
 		memcpy(data + offset, &firstDataBlock, sizeof(firstDataBlock));
 		offset += sizeof(firstDataBlock);
 
+		int test = 6567654;
+
+		memcpy(data + offset, &test, sizeof(test));
+		offset += sizeof(test);
+
 		// Passes
 		int temp = write_sd_block((void*)data, 0);
 		printf("\nWrite to Block 0 returned %i\n", temp);
 
 		// Cleanup
 		free(data);
+
+
 
 		/* Passes
 		char* input = calloc(blockSize, sizeof(char));
@@ -92,11 +100,12 @@ int main()
 	// Write initial FileRecord
 	//  Again basically just 0x00 for all bytes sooo...
 
+
 	// !!! Testing File Record
-	char fileAttr = 0b10000001;
+	char fileAttr = 0b11000010;
 	int dataBlock = 0;
-	int fileSize = 300;
-	char name[23] = "Little";
+	int fileSize = 0;
+	char name[23] = "LittleBoPeepLittleBoPee";
 
 	data = calloc(blockSize, sizeof(char));
 	memcpy(data, &fileAttr, sizeof(char));
@@ -104,9 +113,21 @@ int main()
 	memcpy(data+5, &fileSize, sizeof(int));
 	memcpy(data+9, name, sizeof(name));
 
+	int offset2 = 32;
+
+	fileAttr = 0b10000001;
+	dataBlock = 0;
+	fileSize = 0;
+	char name2[23] = "p";
+
+	memcpy(data + offset2, &fileAttr, sizeof(char));
+	memcpy(data + offset2 +1, &dataBlock, sizeof(int));
+	memcpy(data + offset2 +5, &fileSize, sizeof(int));
+	memcpy(data + offset2 +9, name2, sizeof(name2));
+
 	write_sd_block((void*)data, firstDirBlock);
 
 
 
-	printf("File System Initialization Successful");
+	printf("File System Initialization Successful\n");
 }
