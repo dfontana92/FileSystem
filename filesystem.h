@@ -1,7 +1,9 @@
 
 // main private file type
 typedef FileInternals {
-		// private—you implement this
+		// Need to track current position in file
+		// Can also track File size
+		// Read-Only / Read-Write (File Mode enum)
 } FileInternals;
 
 // file type used by user code
