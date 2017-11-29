@@ -1,5 +1,7 @@
 /* 
 	File System Internals
+	
+	*** MUST BE COMPILED WITH -lm FLAG ***
 
 */
 
@@ -58,6 +60,8 @@ File create_file(char *name, FileMode mode)
 // position is set at byte 0.  Returns NULL on error. Always sets 'fserror' global.
 File open_file(char *name, FileMode mode)
 {
+	Error = FS_NONE;
+
 	#define numRecordBlocks info.numRecordBlocks
 	#define firstRecordBlock info.firstRecordBlock
 
@@ -90,7 +94,7 @@ File open_file(char *name, FileMode mode)
 			// END OF RECORDS, FILE NOT FOUND
 			if(fileAttr == 0)
 			{
-				printf("File Not Found: %s\n", name);
+				//printf("File Not Found: %s\n", name);
 				Error = FS_FILE_NOT_FOUND;
 				return NULL;
 			}
@@ -177,11 +181,9 @@ void close_file(File file)
 	unsigned int recordIndex = recordNumber - (blockIndex * recordsPerBlock);
 	unsigned int recordOffset = recordIndex * SIZE_OF_RECORD_ENTRY;
 
-	unsigned int absBlockNumber = (recordNumber / recordsPerBlock) + firstRecordBlock;
-
 	// Read Block with recordNumber in it
 	char* blockData = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
-	read_sd_block(blockData, absBlockNumber);
+	read_sd_block(blockData, blockIndex + firstRecordBlock);
 
 	unsigned char fileAttr;
 	memcpy(&fileAttr, blockData + recordOffset, sizeof(char));
@@ -192,7 +194,7 @@ void close_file(File file)
 		fileAttr = fileAttr & ~(32);
 		memcpy(blockData + recordOffset, &fileAttr, sizeof(char));
 
-		write_sd_block(blockData, absBlockNumber);
+		write_sd_block(blockData, blockIndex + firstRecordBlock);
 	}
 	else
 	{
@@ -201,6 +203,127 @@ void close_file(File file)
 
 	free(blockData);
 	#undef firstRecordBlock
+}
+
+// read at most 'numbytes' of data from 'file' into 'buf', starting at the 
+// current file position.  Returns the number of bytes read. If end of file is reached,
+// then a return value less than 'numbytes' signals this condition. Always sets
+// 'fserror' global.
+unsigned long read_file(File file, void *buf, unsigned long numbytes)
+{
+	#define firstDataBlock info.firstDataBlock
+
+	FSInfo info = get_fs_info();
+
+
+	Error = FS_NONE;
+
+	unsigned int recordNumber = (*file).recordNumber;
+
+	if(is_open(recordNumber) == 0)
+	{
+		Error = FS_FILE_NOT_OPEN;
+		return 0;
+	}
+
+	// IF READ REQUEST IS BIGGER THAN FILE
+	//  READ TO END OF FILE.
+	if((*file).fileSize < ((*file).filePos + numbytes));
+		numbytes = (*file).fileSize - (*file).filePos;
+
+	// Position in Current Block
+	unsigned int relativePos = (*file).filePos % SOFTWARE_DISK_BLOCK_SIZE;
+
+	unsigned int bytesRead = 0;
+
+	char* blockData = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
+
+	// READ CURRENT DATA BLOCK
+	unsigned int currentBlockIndex = (*file).currentBlock;
+	read_sd_block(blockData, currentBlockIndex + firstDataBlock);
+
+	// NEXT BLOCK VALUE
+	unsigned int nextBlock = get_next_data_block(currentBlockIndex);
+
+	// More than 1 Read?
+	int readOverflow = numbytes - (SOFTWARE_DISK_BLOCK_SIZE - relativePos);
+
+	// SINGLE READ
+	if(readOverflow <= 0) {
+		// COPY TO BUF, FROM BLOCKDATA+RELATIVEPOS, NUMBYTES
+		memcpy(buf, blockData + relativePos, numbytes);
+
+		// UPDATE BYTES WRITTEN
+		bytesRead += numbytes;
+	}
+	// MULTIPLE READS
+	else
+	{
+		unsigned int numReads = (int)ceil(readOverflow / SOFTWARE_DISK_BLOCK_SIZE);
+
+		// ========== FIRST READ ==========
+		// =================================
+			// COPY TO BUF, FROM BLOCKDATA+RELATIVEPOS, (SDBS - RELATIVEPOS) BYTES
+			memcpy(buf, blockData + relativePos, (SOFTWARE_DISK_BLOCK_SIZE - relativePos));
+
+			// UPDATE BYTES WRITTEN
+			bytesRead += (SOFTWARE_DISK_BLOCK_SIZE - relativePos);
+
+
+		// =========== LOOPING READ ===========
+		// =====================================
+			for(int i = 1; i < numReads; i++)
+			{
+
+			// ========== CONTEXT SWITCHING ==========
+			// =======================================
+				// IS END-OF-FILE
+				if(nextBlock == 0xFFFFFFFF)
+				{
+					// DO NOT READ PAST EOF
+					break;
+				}
+				// NOT END-OF-FILE
+				else
+				{
+					// SWITCH CONTEXT TO NEXT BLOCK
+					currentBlockIndex = nextBlock;
+					nextBlock = get_next_data_block(currentBlockIndex);
+				}
+
+			// ========== DATA READING ==========
+			// ==================================
+				// READ NEW DATA BLOCK INTO BUFFER
+				read_sd_block(blockData, currentBlockIndex + firstDataBlock);
+
+					// MORE THAN FULL BLOCK LEFT
+					if((numbytes - bytesRead) > SOFTWARE_DISK_BLOCK_SIZE)
+					{
+						// COPY SW_D_BLK_SIZE TO BUF
+						memcpy(buf, blockData, SOFTWARE_DISK_BLOCK_SIZE);
+
+						// INCREMENT BYTES WRITTEN
+						bytesRead += SOFTWARE_DISK_BLOCK_SIZE;
+					}
+					// LESS THAN FULL BLOCK LEFT
+					else
+					{
+						// COPY (NUMBYTES - BYTESWRITTEN) TO BUFFER
+						memcpy(buf, blockData, (numbytes - bytesRead));
+
+						// INCREMENT BYTES WRITTEN
+						bytesRead += (numbytes - bytesRead);
+					}
+			}
+	}
+
+	free(blockData);
+
+	(*file).filePos += bytesRead;
+
+	return bytesRead;
+
+	#undef firstDataBlock
 }
 
 // write 'numbytes' of data from 'buf' into 'file' at the current file position. 
@@ -248,7 +371,7 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
 		}
 
 	// Position in Current Block
-	unsigned int relativePos = (*file).filePos % 512;
+	unsigned int relativePos = (*file).filePos % SOFTWARE_DISK_BLOCK_SIZE;
 
 	unsigned int bytesWritten = 0;
 
@@ -368,6 +491,8 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
 		update_file_size(recordNumber, (*file).fileSize);
 	}
 
+	(*file).filePos += bytesWritten;
+
 	free(blockData);
 	
 	return bytesWritten;
@@ -377,10 +502,83 @@ unsigned long write_file(File file, void *buf, unsigned long numbytes)
 	#undef firstFatBlock
 }
 
+// sets current position in file to 'bytepos', always relative to the beginning of file.
+// Seeks past the current end of file should extend the file. Always sets 'fserror'
+// global.
+void seek_file(File file, unsigned long bytepos)
+{
+	Error = FS_NONE;
+	unsigned int recordNumber = (*file).recordNumber;
+
+	if(is_open(recordNumber) == 0)
+	{
+		Error = FS_FILE_NOT_OPEN;
+		return;
+	}
+
+	unsigned int fileSize = (*file).fileSize;
+
+	unsigned int startingBlock = (*file).startingBlock;
+	unsigned int currentBlock = startingBlock;
+
+	// How many blocks we are seeking into
+	unsigned int numBlocks = bytepos / SOFTWARE_DISK_BLOCK_SIZE;
+
+	// Offset into last block
+	unsigned int byteOffset = bytepos - (numBlocks * SOFTWARE_DISK_BLOCK_SIZE);
+
+	// LOOP TO GET CURRENT BLOCK
+	for(int i = 0; i < numBlocks; i++)
+	{
+		// GET CHILD BLOCK
+		unsigned int next = get_next_data_block(currentBlock);
+
+		// IF CHILD 0XFFFFFFFF (EOF)
+		if(next == 0XFFFFFFFF)
+		{
+			// FIND NEXT FREE BLOCK
+			unsigned int freeBlock = get_free_data_block();
+				if(freeBlock == 0xFFFFFFFF)
+				{
+					Error = FS_OUT_OF_SPACE;
+
+					// CALCULATE TOTAL SPACE ALLOCATED VIA SEEK
+					unsigned int totalSize = (i+1) * SOFTWARE_DISK_BLOCK_SIZE;
+
+					// IF TOTAL SPACE EXCEEDED OLD FILE SIZE, UPDATE FILE SIZE
+					if(totalSize > fileSize)
+						update_file_size((*file).recordNumber, totalSize);
+
+					return;
+				}
+
+			// ALLOCATE
+			allocate_data_block(&currentBlock, freeBlock);
+
+			// CONTEXT SWITCH
+			currentBlock = freeBlock;
+		}
+		else
+		{
+			// JUST CONTEXT SWITCH
+			currentBlock = next;
+		}
+	}
+
+	// UPDATE FILEINTERNALS
+	if(bytepos > fileSize)
+		update_file_size((*file).recordNumber, bytepos);
+
+	(*file).currentBlock = currentBlock;
+
+	(*file).filePos = bytepos;
+}
 
 // returns the current length of the file in bytes. Always sets 'fserror' global.
 unsigned long file_length(File file)
 {
+
+
 	return (*file).fileSize;
 }
 
@@ -402,7 +600,7 @@ int delete_file(char *name)
 
 	if (recordNumber == 0xFFFFFFFF)
 	{
-		printf("Failed to delete %s - File Not Found\n", name);
+		//printf("Failed to delete %s - File Not Found\n", name);
 		Error = FS_FILE_NOT_FOUND;
 		return 0;
 	}
@@ -425,7 +623,7 @@ int delete_file(char *name)
 	// IF FILE IS OPEN
 	if(isNthBitSet(fileAttr, 2))
 	{
-		printf("Failed to delete %s - File Open\n", name);
+		//printf("Failed to delete %s - File Open\n", name);
 		Error = FS_FILE_OPEN;
 		free(blockData);
 		return 0;
@@ -492,7 +690,7 @@ int delete_file(char *name)
 			memcpy(blockData + entryOffset, &zero, sizeof(int));
 			write_sd_block(blockData, absBlockNumber);
 
-			printf("Successfully deleted %s\n", name);
+			//printf("Successfully deleted %s\n", name);
 			free(blockData);
 			return 1;
 		}
@@ -510,96 +708,16 @@ int delete_file(char *name)
 // Always sets 'fserror' global.
 int file_exists(char *name)
 {
+	unsigned int exists = find_file(name);
 
-	Error = FS_NONE;
-
-	// ========== RETRIEVE RECORD BLOCK ===========
-	// ============================================
-
-	// First File Record block is located Bytes 16-19
-	char* data = calloc(512, sizeof(char));
-	int errCheck = read_sd_block(data, 0);
-
-	// Parsing Block Index and numDirBlocks
-	int firstRecordBlock;
-	int numDirBlocks;
-	memcpy(&firstRecordBlock, (data + 16), sizeof(int));
-	memcpy(&numDirBlocks, (data + 4), sizeof(int));
-
-	// Read File Record Block
-	free(data);
-	data = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
-	read_sd_block(data, firstRecordBlock);
-
-
-	// ========== RECORD CHECKING ===========
-	// ======================================
-
-	unsigned int nameLength = strlen(name);
-	unsigned char numRecordsTarget = (char)ceil(nameLength/23.0);
-
-
-	// Loop Info: scanning File Records 	(!!! Need to have case for overflow to next File Record block !!!)
-	// Check if record present 				(0th bit of fileAttr)
-	// .check if parent						(1st bit of fileAttr)
-	// ..check if numRecords is correct 	(4-7 bits of fileAttr)
-	// ...check name (inner loop)			(bytes 9-31)
-
-	unsigned int alignment = 32;
-	unsigned int maxRecords = numDirBlocks * 512 / 32;
-
-	for(int entryIndex = 0; entryIndex < maxRecords; entryIndex++)
+	if(exists != 0xFFFFFFFF)
 	{
-		// Byte-offset from beginning of block to beginning of current entry
-		unsigned int entryOffset = alignment * entryIndex;
-
-		// fileAttr byte
-		//  0 		- exists
-		//  1 		- parent
-		//  2 		- in use
-		//  3 		- n/a
-		//  [4,7] 	- internal entry index (total entries if parent)
-		unsigned char fileAttr;
-		memcpy(&fileAttr, data + entryOffset, sizeof(char));
-
-		if(fileAttr == 0) // End of Records
-		{
-			break;
-		}
-
-		if(isNthBitSet(fileAttr, 0)) // is Record Present
-		{
-			if(isNthBitSet(fileAttr, 1)) // is Parent Record
-			{
-				unsigned char numRecordsCurrent = fileAttr & 15;
-				if(numRecordsCurrent == numRecordsTarget) // Matches record length
-				{
-					
-					// Name Checking
-					unsigned char fileName[numRecordsCurrent*23];
-
-					// Loop to read full name from multiple File Records
-					for(int internalIndex = 0; internalIndex < numRecordsCurrent; internalIndex++)
-					{
-						// Offset 
-						// Name is bytes 9-31 of each record (23 Bytes)
-						memcpy((fileName + (internalIndex*23)), (data + entryOffset + (internalIndex*32) + 9), 23*sizeof(char));
-					}
-
-					if(!strcmp(fileName, name))
-					{
-						// FILE FOUND
-						free(data);
-						return 1;
-					}
-				}
-			}
-		}
+		return 1;
 	}
-
-	// FILE NOT FOUND
-	free(data);
-	return 0; 
+	else
+	{
+		return 0;
+	}
 }
 
 // describe current filesystem error code by printing a descriptive message to standard
@@ -669,7 +787,6 @@ unsigned int find_file(char *name)
 			// END OF RECORDS, FILE NOT FOUND
 			if(fileAttr == 0)
 			{
-				Error = FS_FILE_NOT_FOUND;
 				return 0xFFFFFFFF;
 			}
 
@@ -704,6 +821,41 @@ unsigned int find_file(char *name)
 	}
 
 	#undef numRecordBlocks
+	#undef firstRecordBlock
+}
+
+// Determines if File (given Record Number) is open
+//  returns 1 for Open
+//  returns 0 for Closed
+unsigned int is_open(unsigned int recordNumber)
+{
+	#define firstRecordBlock info.firstRecordBlock
+	FSInfo info = get_fs_info();
+
+	// READ FILE RECORD BLOCK
+	unsigned int recordsPerBlock = SOFTWARE_DISK_BLOCK_SIZE / SIZE_OF_RECORD_ENTRY;
+	unsigned int blockIndex = recordNumber / recordsPerBlock;
+	unsigned int recordIndex = recordNumber - (blockIndex * recordsPerBlock);
+	unsigned int recordOffset = recordIndex * SIZE_OF_RECORD_ENTRY;
+
+	char* blockData = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
+	read_sd_block(blockData, blockIndex + firstRecordBlock);
+
+	// GET FILE ATTRIBUTES
+	unsigned int fileAttr;
+	memcpy(&fileAttr, blockData + recordOffset, sizeof(char));
+
+	free(blockData);
+
+	// IF -- FILE IS NOT OPEN
+	if(!isNthBitSet(fileAttr, 2))
+	{
+		return 0;
+	}
+	else
+	{
+		return 1;
+	}
 	#undef firstRecordBlock
 }
 

@@ -1,5 +1,5 @@
 /*
-	Gotta Format that FS, baby
+	** 
 */
 
 #include <stdio.h>
@@ -10,27 +10,20 @@
 
 int main()
 {
-	// Initialize the Software Disk, yo
-	// !!! Add error handling to this
 	init_software_disk();
 
-	// Now layout that sweet disk structure
 	int blockSize = SOFTWARE_DISK_BLOCK_SIZE;
 	int numBlocks = software_disk_size();
 
-	printf("Disk Size is %i Blocks / %i Bytes\n", numBlocks, (numBlocks*blockSize));
 
 	// FAT using 4-byte (32-bit) integers for Block allocation numbers
 	int numFatBlocks = (int)ceil((4.0 * numBlocks / blockSize));
-	printf("FAT using %i Blocks\n", numFatBlocks);
 
 	// Use 1% of Disk Space for file entries
 	int numRecordBlocks = (int)ceil((numBlocks * 0.01));
-	printf("File Entries using %i Blocks\n", numRecordBlocks);
 
 	// Rest of disk is data
 	int numDataBlocks = numBlocks - 1 - numFatBlocks - numRecordBlocks;
-	printf("Data using remaining %i Blocks\n", numDataBlocks);
 
 	// Offsets
 	int firstFatBlock = 1;
@@ -73,30 +66,10 @@ int main()
 		offset += sizeof(firstDataBlock);
 
 		// Passes
-		int temp = write_sd_block((void*)data, 0);
-		printf("Initial write of FS Info returned %i\n", temp);
+		write_sd_block((void*)data, 0);
 
 		// Cleanup
 		free(data);
 
-	// Write initial FAT table
-	//  Basically just 0x00 to all bytes (so don't write anything..)
-
-	// Write initial FileRecord
-	//  Again basically just 0x00 for all bytes sooo...
-
-	/* !!! Testing File Record
-	char fileAttr = 0b11000001;
-	int dataBlock = 0;
-	int fileSize = 0;
-	char name[23] = "testing";
-
-	data = calloc(blockSize, sizeof(char));
-	memcpy(data, &fileAttr, sizeof(char));
-	memcpy(data+1, &dataBlock, sizeof(int));
-	memcpy(data+5, &fileSize, sizeof(int));
-	memcpy(data+9, name, sizeof(name));
-	*/
-
-	printf("File System Initialization Completed\n");
+	//printf("File System Initialization Completed\n");
 }

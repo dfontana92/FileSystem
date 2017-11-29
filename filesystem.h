@@ -105,6 +105,8 @@ struct FSInfo get_fs_info();
 
 unsigned int find_file(char *name);
 
+unsigned int is_open(unsigned int recordNumber);
+
 // Returns index of first free entry in the FAT
 //  Returns 0xFFFFFFFF on OUT_OF_SPACE error
 unsigned int get_free_data_block();
