@@ -20,24 +20,22 @@ int main()
 
 	printf("Disk Size is %i Blocks / %i Bytes\n", numBlocks, (numBlocks*blockSize));
 
-	printf("First Block is FileSys Info\n");
-
 	// FAT using 4-byte (32-bit) integers for Block allocation numbers
 	int numFatBlocks = (int)ceil((4.0 * numBlocks / blockSize));
 	printf("FAT using %i Blocks\n", numFatBlocks);
 
 	// Use 1% of Disk Space for file entries
-	int numDirBlocks = (int)ceil((numBlocks * 0.01));
-	printf("File Entries using %i Blocks\n", numDirBlocks);
+	int numRecordBlocks = (int)ceil((numBlocks * 0.01));
+	printf("File Entries using %i Blocks\n", numRecordBlocks);
 
 	// Rest of disk is data
-	int numDataBlocks = numBlocks - 1 - numFatBlocks - numDirBlocks;
+	int numDataBlocks = numBlocks - 1 - numFatBlocks - numRecordBlocks;
 	printf("Data using remaining %i Blocks\n", numDataBlocks);
 
 	// Offsets
 	int firstFatBlock = 1;
-	int firstDirBlock = 1 + numFatBlocks;
-	int firstDataBlock = 1 + numFatBlocks + numDirBlocks;
+	int firstRecordBlock = 1 + numFatBlocks;
+	int firstDataBlock = 1 + numFatBlocks + numRecordBlocks;
 
 	// Free Space Tracker (not super efficient)
 	int lastUsedBlock = 0;
@@ -47,7 +45,7 @@ int main()
 	//  numDirBlocks	(bytes 4-7)
 	//  numDataBlocks	(bytes 8-11)
 	//	firstFatBlock	(bytes 12-15)
-	//	firstDirBlock	(bytes 16-19)
+	//	firstRecordBlock(bytes 16-19)
 	//  firstDataBlock	(bytes 20-23)
 	//  lastUsedBlock	(bytes 24-27) - starts as 0, no need to write
 
@@ -59,8 +57,8 @@ int main()
 		memcpy(data + offset, &numFatBlocks, sizeof(numFatBlocks));
 		offset += sizeof(numFatBlocks);
 
-		memcpy(data + offset, &numDirBlocks, sizeof(numDirBlocks));
-		offset += sizeof(numDirBlocks);
+		memcpy(data + offset, &numRecordBlocks, sizeof(numRecordBlocks));
+		offset += sizeof(numRecordBlocks);
 
 		memcpy(data + offset, &numDataBlocks, sizeof(numDataBlocks));
 		offset += sizeof(numDataBlocks);
@@ -68,31 +66,18 @@ int main()
 		memcpy(data + offset, &firstFatBlock, sizeof(firstFatBlock));
 		offset += sizeof(firstFatBlock);
 
-		memcpy(data + offset, &firstDirBlock, sizeof(firstDirBlock));
-		offset += sizeof(firstDirBlock);
+		memcpy(data + offset, &firstRecordBlock, sizeof(firstRecordBlock));
+		offset += sizeof(firstRecordBlock);
 
 		memcpy(data + offset, &firstDataBlock, sizeof(firstDataBlock));
 		offset += sizeof(firstDataBlock);
 
-		int test = 6567654;
-
-		memcpy(data + offset, &test, sizeof(test));
-		offset += sizeof(test);
-
 		// Passes
 		int temp = write_sd_block((void*)data, 0);
-		printf("\nWrite to Block 0 returned %i\n", temp);
+		printf("\nInitial write of FS Info returned %i\n\n", temp);
 
 		// Cleanup
 		free(data);
-
-
-
-		/* Passes
-		char* input = calloc(blockSize, sizeof(char));
-		temp = read_sd_block(input, 0);
-		printf("Read from Block 0 returned %i\n", temp);
-		*/
 
 	// Write initial FAT table
 	//  Basically just 0x00 to all bytes (so don't write anything..)
@@ -100,34 +85,18 @@ int main()
 	// Write initial FileRecord
 	//  Again basically just 0x00 for all bytes sooo...
 
-
-	// !!! Testing File Record
-	char fileAttr = 0b11000010;
+	/* !!! Testing File Record
+	char fileAttr = 0b11000001;
 	int dataBlock = 0;
 	int fileSize = 0;
-	char name[23] = "LittleBoPeepLittleBoPee";
+	char name[23] = "testing";
 
 	data = calloc(blockSize, sizeof(char));
 	memcpy(data, &fileAttr, sizeof(char));
 	memcpy(data+1, &dataBlock, sizeof(int));
 	memcpy(data+5, &fileSize, sizeof(int));
 	memcpy(data+9, name, sizeof(name));
+	*/
 
-	int offset2 = 32;
-
-	fileAttr = 0b10000001;
-	dataBlock = 0;
-	fileSize = 0;
-	char name2[23] = "p";
-
-	memcpy(data + offset2, &fileAttr, sizeof(char));
-	memcpy(data + offset2 +1, &dataBlock, sizeof(int));
-	memcpy(data + offset2 +5, &fileSize, sizeof(int));
-	memcpy(data + offset2 +9, name2, sizeof(name2));
-
-	write_sd_block((void*)data, firstDirBlock);
-
-
-
-	printf("File System Initialization Successful\n");
+	printf("File System Initialization Completed\n");
 }

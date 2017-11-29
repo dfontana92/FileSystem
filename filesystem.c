@@ -12,6 +12,18 @@
 
 
 // GLOBALS
+FSError Error = FS_NONE;
+
+typedef struct FileInternals 
+{
+	unsigned int recordNumber;
+    unsigned int fileSize;
+    unsigned int absFilePos;
+    unsigned int relFilePos;
+    unsigned int startingBlock;
+    unsigned int currentBlock;
+    FileMode mode;
+} FileInternals; 
 
 /*
 // open existing file with pathname 'name' and access mode 'mode'.  Current file
@@ -38,18 +50,44 @@ File open_file(char *name, FileMode mode)
 // position is set at byte 0.  Returns NULL on error. Always sets 'fserror' global.
 File create_file(char *name, FileMode mode)
 {
-	// Find a free block in FAT
-	// Create new file entry in file entry Block
-		// Can only write full block,
-		//	 so read entire block via SoftwareDisk into a char(byte) buffer,
-		//   
+	Error = FS_NONE;
+
+	// Check IF file already exists
+	if(file_exists(name))
+	{
+		Error = FS_FILE_ALREADY_EXISTS;
+		return NULL;
+	}
+
+	// Get number of records needed to create file
+	unsigned int length = strlen(name);
+	unsigned int recordsRequired = (int)ceil(length/23.0);
+
+	// Find unused data block
+	unsigned int firstBlock = get_free_data_block();
+	if(Error == FS_OUT_OF_SPACE)
+		return NULL;
+	
+	// Find suitable file record
+	unsigned int firstRecord = get_free_record(recordsRequired);
+	if (Error == FS_OUT_OF_SPACE)
+		return NULL;
+
+
+
+
+	return NULL;
 }
 
-
+// determines if a file with 'name' exists and returns 1 if it exists, otherwise 0.
+// Always sets 'fserror' global.
 int file_exists(char *name)
 {
 
+	Error = FS_NONE;
+
 	// ========== RETRIEVE RECORD BLOCK ===========
+	// ============================================
 
 	// First File Record block is located Bytes 16-19
 	char* data = calloc(512, sizeof(char));
@@ -60,28 +98,25 @@ int file_exists(char *name)
 	int numDirBlocks;
 	memcpy(&firstRecordBlock, (data + 16), sizeof(int));
 	memcpy(&numDirBlocks, (data + 4), sizeof(int));
-	
-		// Sanity Check
-		printf("First Record Block: %i\nNumber of Record Blocks: %i\n", firstRecordBlock, numDirBlocks);
 
-
-	// Read Record Block into buffer
+	// Read File Record Block
 	free(data);
 	data = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
 	read_sd_block(data, firstRecordBlock);
 
-	//===== RECORD CHECKING ======
 
-	// Calculate name length
-	//  length/23 number of records required to match
+	// ========== RECORD CHECKING ===========
+	// ======================================
+
 	unsigned int nameLength = strlen(name);
 	unsigned char numRecordsTarget = (char)ceil(nameLength/23.0);
 
-	// Looping through File Records (!!! Need to have case for overflow to next File Record block !!!)
+
+	// Loop Info: scanning File Records 	(!!! Need to have case for overflow to next File Record block !!!)
 	// Check if record present 				(0th bit of fileAttr)
-	//  check if parent						(1st bit of fileAttr)
-	//   check if numRecords is correct 	(4-7 bits of fileAttr)
-	//    check name 						(bytes 9-31)
+	// .check if parent						(1st bit of fileAttr)
+	// ..check if numRecords is correct 	(4-7 bits of fileAttr)
+	// ...check name (inner loop)			(bytes 9-31)
 
 	unsigned int alignment = 32;
 	unsigned int maxRecords = numDirBlocks * 512 / 32;
@@ -91,7 +126,12 @@ int file_exists(char *name)
 		// Byte-offset from beginning of block to beginning of current entry
 		unsigned int entryOffset = alignment * entryIndex;
 
-		// Get fileAttr byte
+		// fileAttr byte
+		//  0 		- exists
+		//  1 		- parent
+		//  2 		- in use
+		//  3 		- n/a
+		//  [4,7] 	- internal entry index (total entries if parent)
 		unsigned char fileAttr;
 		memcpy(&fileAttr, data + entryOffset, sizeof(char));
 
@@ -113,7 +153,7 @@ int file_exists(char *name)
 					printf("..Found present, parent record of matching length (%i)\n", numRecordsCurrent);
 					
 					// Name Checking
-					char fileName[numRecordsCurrent*23];
+					unsigned char fileName[numRecordsCurrent*23];
 
 					// Loop to read full name from multiple File Records
 					for(int internalIndex = 0; internalIndex < numRecordsCurrent; internalIndex++)
@@ -128,40 +168,278 @@ int file_exists(char *name)
 					printf("Searching for: %s\n", name);
 
 					if(!strcmp(fileName, name))
-						printf("Test Success!\n");
+					{
+						// FILE FOUND
+						free(data);
+						return 1;
+					}
 				}
 			}
-		} 
+		}
 	}
-	
-	/* THIS PASSED PREVIOUSLY
-	if(isNthBitSet(fileAttr, 0))
+
+	// FILE NOT FOUND
+	free(data);
+	return 0; 
+}
+
+// describe current filesystem error code by printing a descriptive message to standard
+// error.
+void fs_print_error(void)
+{
+	if(Error == FS_NONE)
+		fprintf(stderr, "Operation Successful - No Error.\n");
+
+	if(Error == FS_FILE_ALREADY_EXISTS)
+		fprintf(stderr, "Operation Failed - File Already Exists.\n");
+}
+
+// Allocates a data block, updating parent's FAT value
+unsigned int allocate_data_block(int* parentFatIndexPtr, int targetFatIndex)
+{
+	#define firstFatBlock info.firstFatBlock
+
+	struct FSInfo info = get_fs_info();
+
+	unsigned int entriesPerBlock = SOFTWARE_DISK_BLOCK_SIZE / SIZE_OF_FAT_ENTRY;
+	unsigned int targetFatBlockNumber = targetFatIndex / entriesPerBlock;
+	unsigned int targetInternalIndex = targetFatIndex - (targetFatBlockNumber * entriesPerBlock);
+
+	// Read FAT Block containing the Target Entry
+	char* blockData = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
+	read_sd_block(blockData, (targetFatBlockNumber + firstFatBlock));
+
+	// Get Current Value of Target Entry, check it is free
+	unsigned int currentValue;
+	memcpy(&currentValue, (blockData + (targetInternalIndex * SIZE_OF_FAT_ENTRY)), sizeof(int));
+
+		// Block is currently allocated (ERROR)
+		if(currentValue != 0x00000000)
+		{
+			printf("Internal FileSystem Error - Allocation Failed - Block Already Allocated\n");
+			free(blockData);
+			return 0;
+		}
+
+	// Write termination symbol to complete allocation
+	currentValue = 0xFFFFFFFF;
+	memcpy((blockData + (targetInternalIndex * SIZE_OF_FAT_ENTRY)), &currentValue, sizeof(int));
+	write_sd_block(blockData, (targetFatBlockNumber +firstFatBlock));
+
+	// Regular Allocation Case (WRITE, SEEK), Must Update Parent
+	if(parentFatIndexPtr != NULL)
 	{
-		printf("Detected File Record\n");
-		
-		// !!! NEED TO HANDLE LONG FILE NAMES
-		//  Probably get strlen from name arg
-		//  then use length/23 to determine number of records
-		//  if 4 least-sig bits don't match that number then skip to next parent
-		//  if number of records matches, then read name (below)
-		//   Must scale fileName[] to length
-		//   			memcpy(d, s, length*sizeof(char))
+		unsigned int parentFatIndex = *parentFatIndexPtr;
+		unsigned int parentFatBlockNumber = parentFatIndex / entriesPerBlock;
+		unsigned int parentInternalIndex = parentFatIndex - (parentFatBlockNumber * entriesPerBlock);
 
+		free(blockData);
 
-		// Check Name
-		char fileName[23];
-		memcpy(fileName, data+9, 23*sizeof(char));
+		blockData = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
+		read_sd_block(blockData, (parentFatBlockNumber + firstFatBlock));
 
-		printf("File Name: %s\n", fileName);
-		printf("Searching for: %s\n", name);
+		memcpy(&currentValue, (blockData + (parentInternalIndex * SIZE_OF_FAT_ENTRY)), sizeof(int));
 
-		if(!strcmp(fileName, name))
-			printf("Test Success!\n");
+			if(currentValue != 0xFFFFFFFF)
+			{
+				printf("Internal FileSystem Error - Allocation Failed - Parent NOT End of Chain");
+				free(blockData);
+				return 0;
+			}
+
+		currentValue = targetFatIndex;
+		memcpy((blockData + (parentInternalIndex * SIZE_OF_FAT_ENTRY)), &currentValue, sizeof(int));
 	}
-	*/
 
-
+	free(blockData);
 	return 1;
+	#undef firstFatBlock
+}
+
+// Writes a val into FAT entryNumber
+/*
+unsigned int write_fat_entry(unsigned int entryNumber, unsigned int entryVal)
+{
+	#define firstFatBlock info.firstFatBlock
+
+	struct FSInfo info = get_fs_info();
+
+	unsigned int entryPerBlock = SOFTWARE_DISK_BLOCK_SIZE / SIZE_OF_FAT_ENTRY;
+	unsigned int fatBlockNumber = entryNumber / entryPerBlock;
+	unsigned int internalIndex = entryNumber - (fatBlockNumber * entryPerBlock);
+
+	int* blockData = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
+	read_sd_block(blockData, (fatBlockNumber + firstFatBlock));
+
+	// Writing entryVal to the entry using index (pointer-arithmetic is integer)
+	memcpy((blockData + internalIndex), &entryVal, sizeof(int));
+	int success = write_sd_block(blockData, (fatBlockNumber + firstFatBlock));
+
+	free(blockData);
+
+	if(success)
+		printf("Successfully wrote %i to FAT entry %i\n", entryVal, entryNumber);
+
+	#undef firstFatBlock
+}
+*/
+
+
+unsigned int write_record_entry()
+{
+
+}
+
+unsigned int update_file_size(unsigned int recordNumber, unsigned int size)
+{
+	#define firstRecordBlock info.firstRecordBlock
+
+	struct FSInfo info = get_fs_info();
+
+	unsigned int recordsPerBlock = SOFTWARE_DISK_BLOCK_SIZE / SIZE_OF_RECORD_ENTRY;
+	unsigned int dirBlockNumber = recordNumber / recordsPerBlock;
+	unsigned int internalIndex = recordNumber - (dirBlockNumber * recordsPerBlock);
+
+	char* blockData = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
+	read_sd_block(blockData, (dirBlockNumber + firstRecordBlock));
+
+	// Writing size to entry using index and 5-byte offset into entry (pointer-arithmetic is char)
+	memcpy(blockData + (internalIndex * SIZE_OF_RECORD_ENTRY) + 5, &size, sizeof(int));
+	int success = write_sd_block(blockData, (dirBlockNumber + firstRecordBlock));
+
+	free(blockData);
+
+	if(success)
+		printf("Successfully wrote %i file size to file record %i\n", size, recordNumber);
+
+	#undef firstRecordBlock
+}
+
+// Finds and Returns the data Block Number of the first free Data Block
+//  ~ This is the FAT entry number
+//  ~~ Must offset by +firstDataBlock to read/write block
+unsigned int get_free_data_block()
+{
+	FSInfo info = get_fs_info();
+
+	#define firstFatBlock info.firstFatBlock
+	#define numFatBlocks info.numFatBlocks
+	#define firstDataBlock info.firstDataBlock
+
+	// Don't read past maxFatRecords
+	unsigned int entriesPerBlock = SOFTWARE_DISK_BLOCK_SIZE / SIZE_OF_FAT_ENTRY;
+	unsigned int maxFatRecords = numFatBlocks * entriesPerBlock;
+	char* blockData;
+
+	for(unsigned int blockIndex = 0; blockIndex < numFatBlocks; blockIndex++)
+	{
+
+		// Read Current FAT Block
+		blockData = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
+		read_sd_block(blockData, firstFatBlock+blockIndex);
+
+		for(unsigned int entryIndex = 0; entryIndex < entriesPerBlock; entryIndex++)
+		{
+			unsigned int entryVal;
+			memcpy(&entryVal, (blockData + (SIZE_OF_FAT_ENTRY * entryIndex)), sizeof(int));
+
+			// Found Free FAT Entry
+			if(entryVal == 0)
+			{
+				free(blockData);
+				return (blockIndex * entriesPerBlock + entryIndex);
+			}
+		}
+
+		free(blockData);
+	}
+
+	// No Free Blocks
+	Error = FS_OUT_OF_SPACE;
+
+	#undef firstFatBlock
+	#undef numFatBlocks
+	#undef firstDataBlock
+}
+
+// Finds and Returns the Record Number of the first free contiguous Record entries of length
+unsigned int get_free_record(unsigned int length)
+{
+	#define firstRecordBlock info.firstRecordBlock
+	#define numRecordBlocks info.numRecordBlocks
+
+	struct FSInfo info = get_fs_info();
+
+	unsigned int entriesPerBlock = SOFTWARE_DISK_BLOCK_SIZE / SIZE_OF_RECORD_ENTRY;
+	unsigned int maxRecordEntries = numRecordBlocks * entriesPerBlock;
+	char* blockData;
+
+	for(unsigned int blockIndex = 0; blockIndex < numRecordBlocks; blockIndex++)
+	{
+
+		// Read current Record Block
+		blockData = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
+		read_sd_block(blockData, (firstRecordBlock + blockIndex));
+
+		unsigned int counter = 0;
+
+		for(int entryIndex = 0; entryIndex < entriesPerBlock; entryIndex++)
+		{
+			unsigned char fileAttr;
+			memcpy(&fileAttr, blockData + (SIZE_OF_RECORD_ENTRY * entryIndex), sizeof(char));
+
+			if(fileAttr == 0)
+			{
+				counter++;
+
+				if(counter == length)
+				{
+					free(blockData);
+					return ((blockIndex * entriesPerBlock + entryIndex) - (length - 1));
+				}
+			}
+			else
+			{
+				counter = 0;
+			}
+		}
+	}
+
+	// No Free Records of suitable size
+	Error = FS_OUT_OF_SPACE;
+
+	#undef firstRecordBlock
+	#undef numRecordBlocks
+
+}
+
+struct FSInfo get_fs_info()
+{
+	// Block 0
+	char* blockData = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
+	read_sd_block(blockData, 0);
+
+	struct FSInfo info;
+	unsigned int offset = 0;
+
+	memcpy(&info.numFatBlocks, blockData, sizeof(int));
+		offset += sizeof(int);
+	memcpy(&info.numRecordBlocks, blockData + offset, sizeof(int));
+		offset += sizeof(int);
+	memcpy(&info.numDataBlocks, blockData + offset, sizeof(int));
+		offset += sizeof(int);
+	memcpy(&info.firstFatBlock, blockData + offset, sizeof(int));
+		offset += sizeof(int);
+	memcpy(&info.firstRecordBlock, blockData + offset, sizeof(int));
+		offset += sizeof(int);
+	memcpy(&info.firstDataBlock, blockData + offset, sizeof(int));
+		offset += sizeof(int);
+	memcpy(&info.lastUsedBlock, blockData + offset, sizeof(int));
+		offset += sizeof(int);
+
+	free(blockData);
+
+	return info;
 }
 
 // May Be Unneeded Now
@@ -173,6 +451,7 @@ void iEndianSwap(int* num)
     		((*num<<24)&0xff000000); // byte 0 to byte 3
 }
 
+// Checks if Nth bit of Byte c is set
 int isNthBitSet (unsigned char c, int n) {
     static unsigned char mask[] = {128, 64, 32, 16, 8, 4, 2, 1};
     return ((c & mask[n]) != 0);

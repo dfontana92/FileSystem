@@ -1,18 +1,34 @@
-
-// main private file type
-typedef struct FileInternals {
-		// Need to track current position in file
-		// Can also track File size
-		// Read-Only / Read-Write (File Mode enum)
-} FileInternals;
-
-// file type used by user code
-typedef FileInternals* File;
+#define SIZE_OF_FAT_ENTRY     (1 * sizeof(int))
+#define SIZE_OF_RECORD_ENTRY  (32 * sizeof(char))
 
 // access mode for open_file() and create_file() 
 typedef enum {
-	READ_ONLY, READ_WRITE
+  READ_ONLY, READ_WRITE
 } FileMode;
+
+// main private file type
+typedef struct FileInternals FileInternals;
+
+// FS Information Struct
+//  numFatBlocks  (bytes 0-3)
+//  numRecordBlocks  (bytes 4-7)
+//  numDataBlocks (bytes 8-11)
+//  firstFatBlock (bytes 12-15)
+//  firstRecordBlock (bytes 16-19)
+//  firstDataBlock  (bytes 20-23)
+//  lastUsedBlock (bytes 24-27) - starts as 0, no need to write
+typedef struct FSInfo {
+    unsigned int numFatBlocks;
+    unsigned int numRecordBlocks;
+    unsigned int numDataBlocks;
+    unsigned int firstFatBlock;
+    unsigned int firstRecordBlock;
+    unsigned int firstDataBlock;
+    unsigned int lastUsedBlock;
+} FSInfo;
+
+// file type used by user code
+typedef FileInternals* File;
 
 // error codes set in global 'fserror' by filesystem functions
 typedef enum  {
@@ -73,7 +89,17 @@ void fs_print_error(void);
 
 // filesystem error code set (set by each filesystem function)
 extern FSError fserror;
- 
+
+struct FSInfo get_fs_info();
+
+unsigned int get_free_data_block();
+
+unsigned int get_free_record();
+
+unsigned int write_fat_entry(unsigned int entryNumber, unsigned int entryValue);
+
+unsigned int write_dir_entry();
+
 // Endian-ness sucks
 void iEndianSwap(int* num);
 
