@@ -7,7 +7,19 @@ typedef enum {
 } FileMode;
 
 // main private file type
-typedef struct FileInternals FileInternals;
+typedef struct FileInternals
+{
+  unsigned int recordNumber;
+    unsigned int fileSize;
+    unsigned int absFilePos;
+    unsigned int relFilePos;
+    unsigned int startingBlock;
+    unsigned int currentBlock;
+    FileMode mode;
+} FileInternals;
+
+// file type used by user code
+typedef FileInternals* File;
 
 // FS Information Struct
 //  numFatBlocks  (bytes 0-3)
@@ -26,9 +38,6 @@ typedef struct FSInfo {
     unsigned int firstDataBlock;
     unsigned int lastUsedBlock;
 } FSInfo;
-
-// file type used by user code
-typedef FileInternals* File;
 
 // error codes set in global 'fserror' by filesystem functions
 typedef enum  {
@@ -98,7 +107,9 @@ unsigned int get_free_record();
 
 unsigned int write_fat_entry(unsigned int entryNumber, unsigned int entryValue);
 
-unsigned int write_dir_entry();
+unsigned int write_record_entry(char* name, unsigned int dataBlock);
+
+unsigned int allocate_data_block(int* parentFatIndexPtr, int targetFatIndex);
 
 // Endian-ness sucks
 void iEndianSwap(int* num);

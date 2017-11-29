@@ -74,7 +74,7 @@ int main()
 
 		// Passes
 		int temp = write_sd_block((void*)data, 0);
-		printf("\nInitial write of FS Info returned %i\n\n", temp);
+		printf("Initial write of FS Info returned %i\n", temp);
 
 		// Cleanup
 		free(data);

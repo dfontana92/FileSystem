@@ -12,18 +12,7 @@
 
 
 // GLOBALS
-FSError Error = FS_NONE;
-
-typedef struct FileInternals 
-{
-	unsigned int recordNumber;
-    unsigned int fileSize;
-    unsigned int absFilePos;
-    unsigned int relFilePos;
-    unsigned int startingBlock;
-    unsigned int currentBlock;
-    FileMode mode;
-} FileInternals; 
+FSError Error;
 
 /*
 // open existing file with pathname 'name' and access mode 'mode'.  Current file
@@ -59,24 +48,35 @@ File create_file(char *name, FileMode mode)
 		return NULL;
 	}
 
-	// Get number of records needed to create file
-	unsigned int length = strlen(name);
-	unsigned int recordsRequired = (int)ceil(length/23.0);
-
-	// Find unused data block
+	// Find Free Data Block
 	unsigned int firstBlock = get_free_data_block();
+	printf("FAT Index: %i\n", firstBlock);
 	if(Error == FS_OUT_OF_SPACE)
 		return NULL;
-	
-	// Find suitable file record
-	unsigned int firstRecord = get_free_record(recordsRequired);
-	if (Error == FS_OUT_OF_SPACE)
+
+	// Write File Record (sets Error if error)
+	unsigned int recordIndex = write_record_entry(name, firstBlock);
+	printf("Record Index: %i\n", recordIndex);
+	if(Error == FS_OUT_OF_SPACE)
 		return NULL;
 
+	// Allocate Data Block
+	allocate_data_block(NULL, firstBlock);
 
 
+	// Construct the FileInternals
+	FileInternals* f = malloc(sizeof(FileInternals));
 
-	return NULL;
+	(*f).recordNumber = recordIndex;
+	(*f).fileSize = 0;
+	(*f).absFilePos = 0;
+	(*f).relFilePos = 0;
+	(*f).startingBlock = firstBlock;
+	(*f).currentBlock = firstBlock;
+	(*f).mode = mode;
+
+	// Success!
+	return f;
 }
 
 // determines if a file with 'name' exists and returns 1 if it exists, otherwise 0.
@@ -190,8 +190,23 @@ void fs_print_error(void)
 	if(Error == FS_NONE)
 		fprintf(stderr, "Operation Successful - No Error.\n");
 
+	if(Error == FS_FILE_NOT_OPEN)
+		fprintf(stderr, "Operation Failed - File Referenced not Open\n");
+
+	if(Error == FS_FILE_OPEN)
+		fprintf(stderr, "Operation Failed - File Already Open\n");
+
+	if(Error == FS_FILE_NOT_FOUND)
+		fprintf(stderr, "Operation Failed - File Not Found\n");
+
 	if(Error == FS_FILE_ALREADY_EXISTS)
 		fprintf(stderr, "Operation Failed - File Already Exists.\n");
+
+	if(Error == FS_OUT_OF_SPACE)
+		fprintf(stderr, "Operation Failed - Insufficient Space.\n");
+
+	if(Error == FS_FILE_READ_ONLY)
+		fprintf(stderr, "Operation Failed - File is Read-Only\n");
 }
 
 // Allocates a data block, updating parent's FAT value
@@ -284,9 +299,80 @@ unsigned int write_fat_entry(unsigned int entryNumber, unsigned int entryVal)
 }
 */
 
-
-unsigned int write_record_entry()
+// Creates a new file record
+//  Returns the index number of the File Record created
+unsigned int write_record_entry(char* name, unsigned int dataBlock)
 {
+	struct FSInfo info = get_fs_info();
+	#define firstRecordBlock info.firstRecordBlock
+
+	// Calculate number of records needed for File Name
+	unsigned int length = strlen(name);
+	unsigned int recordsRequired = (int)ceil(length/23.0);
+	printf("Records Required for %s: %i\n", name, recordsRequired);
+
+	// Get record we're going to write into
+	unsigned int parentRecordIndex = get_free_record(recordsRequired);
+	printf("Free Record Found, Index: %i\n", parentRecordIndex);
+	if(Error == FS_OUT_OF_SPACE)
+		return 0;
+
+	// Indexing
+	unsigned int recordsPerBlock = SOFTWARE_DISK_BLOCK_SIZE / SIZE_OF_RECORD_ENTRY;
+	unsigned int parentRecordBlockNumber = parentRecordIndex / recordsPerBlock;
+	unsigned int parentInternalIndex = parentRecordIndex - (parentRecordBlockNumber * recordsPerBlock);
+
+	// Read Block of Parent Record
+	char* blockData = calloc(SOFTWARE_DISK_BLOCK_SIZE, sizeof(char));
+	read_sd_block(blockData, (parentRecordBlockNumber + firstRecordBlock));
+
+	// Write "First Data Block" field to buffer (Only done in Parent record)
+	memcpy((blockData + (parentInternalIndex * SIZE_OF_RECORD_ENTRY) + 1), &dataBlock, sizeof(int));
+
+	for(unsigned int clusterIndex = 0; clusterIndex < recordsRequired; clusterIndex++)
+	{
+		// ===== CONSTRUCT FIRST BYTE =====
+		// ================================
+		unsigned char fileAttr = 0x00;
+
+		fileAttr |= 128; // Set Present Flag
+
+		// IF Parent Block
+		if(clusterIndex == 0)
+		{
+			fileAttr |= 64; // Set Parent Flag
+			fileAttr |= 32; // Set Open Flag (this function only called by Create_File)
+		}
+
+		fileAttr |= (recordsRequired - clusterIndex); // Set Cluster Index
+
+		// Write first Byte
+		memcpy((blockData + (parentInternalIndex * SIZE_OF_RECORD_ENTRY) + (clusterIndex * SIZE_OF_RECORD_ENTRY)), &fileAttr, sizeof(char));
+
+		// Write Name
+		if(length <= 23)
+		{
+			// Write 'length' bytes to name field
+			memcpy((blockData + (parentInternalIndex * SIZE_OF_RECORD_ENTRY) + (clusterIndex * SIZE_OF_RECORD_ENTRY) + 9), name + (clusterIndex * 23), (length * sizeof(char)));
+
+		}
+		else
+		{
+			// Write 23 bytes to name field
+			memcpy((blockData + (parentInternalIndex * SIZE_OF_RECORD_ENTRY) + (clusterIndex * SIZE_OF_RECORD_ENTRY) + 9), name + (clusterIndex * 23), (23 * sizeof(char)));
+
+			// Then decrease length by 23
+			length -= 23;
+		}
+
+	}
+
+	// Write to Disk
+	write_sd_block(blockData, (parentRecordBlockNumber + firstRecordBlock));
+
+	free(blockData);
+	return parentRecordIndex;
+	#undef firstRecordBlock
 
 }
 
@@ -315,8 +401,7 @@ unsigned int update_file_size(unsigned int recordNumber, unsigned int size)
 	#undef firstRecordBlock
 }
 
-// Finds and Returns the data Block Number of the first free Data Block
-//  ~ This is the FAT entry number
+// Finds and Returns the FAT Index of the first free Data Block
 //  ~~ Must offset by +firstDataBlock to read/write block
 unsigned int get_free_data_block()
 {
@@ -363,6 +448,7 @@ unsigned int get_free_data_block()
 }
 
 // Finds and Returns the Record Number of the first free contiguous Record entries of length
+//  SETS FS_OUT_OF_SPACE IF ERROR
 unsigned int get_free_record(unsigned int length)
 {
 	#define firstRecordBlock info.firstRecordBlock
@@ -410,7 +496,6 @@ unsigned int get_free_record(unsigned int length)
 
 	#undef firstRecordBlock
 	#undef numRecordBlocks
-
 }
 
 struct FSInfo get_fs_info()
@@ -452,7 +537,8 @@ void iEndianSwap(int* num)
 }
 
 // Checks if Nth bit of Byte c is set
-int isNthBitSet (unsigned char c, int n) {
+int isNthBitSet (unsigned char c, int n)
+{
     static unsigned char mask[] = {128, 64, 32, 16, 8, 4, 2, 1};
     return ((c & mask[n]) != 0);
 }
