@@ -11,8 +11,7 @@ typedef struct FileInternals
 {
     unsigned int recordNumber;
     unsigned int fileSize;
-    unsigned int absFilePos;
-    unsigned int relFilePos;
+    unsigned int filePos;
     unsigned int startingBlock;
     unsigned int currentBlock;
     FileMode mode;
@@ -99,11 +98,26 @@ void fs_print_error(void);
 // filesystem error code set (set by each filesystem function)
 extern FSError fserror;
 
+// ========== MY FUNCTIONS ==========
+// ==================================
+
 struct FSInfo get_fs_info();
 
+unsigned int find_file(char *name);
+
+// Returns index of first free entry in the FAT
+//  Returns 0xFFFFFFFF on OUT_OF_SPACE error
 unsigned int get_free_data_block();
 
-unsigned int get_free_record();
+// Returns index of first record at start of 'length' contiguous records
+//  Returns 0xFFFFFFFF on OUT_OF_SPACE error
+unsigned int get_free_record(unsigned int length);
+
+// Returns index of child of parentIndex
+//  Returns 0xFFFFFFFF on terminating entry
+unsigned int get_next_data_block(unsigned int parentIndex);
+
+unsigned int update_file_size(unsigned int recordNumber, unsigned int size);
 
 unsigned int write_fat_entry(unsigned int entryNumber, unsigned int entryValue);
 
