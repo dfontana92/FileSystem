@@ -9,7 +9,7 @@ typedef enum {
 // main private file type
 typedef struct FileInternals
 {
-  unsigned int recordNumber;
+    unsigned int recordNumber;
     unsigned int fileSize;
     unsigned int absFilePos;
     unsigned int relFilePos;
